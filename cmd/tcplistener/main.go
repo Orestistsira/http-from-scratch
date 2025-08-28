@@ -29,15 +29,15 @@ func getLinesChannel(f io.ReadCloser) <-chan string {
 
 			parts := strings.Split(string(buffer[:n]), "\n")
 
-			if len(parts) == 1 {
-				currentLine += parts[0]
-			} else if len(parts) == 2 {
-				out <- (currentLine + parts[0])
-				currentLine = parts[1]
-			} else {
-				fmt.Println("Error: More than 2 split parts found")
-				return
+			// For all parts except the last, emit completed lines
+			for i := 0; i < len(parts)-1; i++ {
+				line := currentLine + parts[i]
+				out <- line
+				currentLine = ""
 			}
+
+			// Save the last part for the next iteration
+			currentLine += parts[len(parts)-1]
 		}
 
 		if currentLine != "" {
