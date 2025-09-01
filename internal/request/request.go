@@ -6,10 +6,11 @@ import (
 	"io"
 	"strings"
 	"unicode"
+
+	"github.com/Orestistsira/http-from-scratch/internal/headers"
 )
 
 var ErrMalformedRequestLine = fmt.Errorf("malformed request-line")
-var ErrParserDoneStatus = fmt.Errorf("error trying to read data in a done state")
 var ErrUnknownState = fmt.Errorf("error unknown state")
 
 var separator = []byte("\r\n")
@@ -19,8 +20,9 @@ const bufferSize = 8
 type ParserStatus string
 
 const (
-	ParserStatusInit = "init"
-	ParserStatusDone = "done"
+	ParserStatusInit    = "init"
+	ParserStatusDone    = "done"
+	ParserStatusHeaders = "headers"
 )
 
 type RequestLine struct {
@@ -31,69 +33,66 @@ type RequestLine struct {
 
 type Request struct {
 	RequestLine RequestLine
+	Headers     *headers.Headers
 	Status      ParserStatus
+}
+
+func newRequest() *Request {
+	return &Request{
+		Status:  ParserStatusInit,
+		Headers: headers.NewHeaders(),
+	}
 }
 
 func (r *Request) parse(data []byte) (int, error) {
 	read := 0
 
-	switch r.Status {
-	case ParserStatusInit:
-		rl, n, err := parseRequestLine(data[read:])
-		if err != nil {
-			return 0, err
+outer:
+	for {
+		currentData := data[read:]
+
+		switch r.Status {
+		case ParserStatusInit:
+			rl, n, err := parseRequestLine(currentData)
+			if err != nil {
+				return 0, err
+			}
+
+			if n == 0 {
+				break outer
+			}
+
+			r.RequestLine = *rl
+			read += n
+
+			r.Status = ParserStatusHeaders
+		case ParserStatusHeaders:
+			n, done, err := r.Headers.Parse(currentData)
+			if err != nil {
+				return 0, err
+			}
+
+			if n == 0 {
+				break outer
+			}
+
+			read += n
+
+			if done {
+				r.Status = ParserStatusDone
+			}
+
+		case ParserStatusDone:
+			break outer
+		default:
+			return 0, ErrUnknownState
 		}
-
-		if n == 0 {
-			break
-		}
-
-		r.RequestLine = *rl
-		read += n
-
-		r.Status = ParserStatusDone
-	case ParserStatusDone:
-		return 0, ErrParserDoneStatus
-		// break outer
-	default:
-		return 0, ErrUnknownState
 	}
-
-	// outer:
-	// 	for {
-	// 		switch r.Status {
-	// 		case ParserStatusInit:
-	// 			rl, n, err := parseRequestLine(data[read:])
-	// 			if err != nil {
-	// 				return 0, err
-	// 			}
-
-	// 			if n == 0 {
-	// 				break outer
-	// 			}
-
-	// 			r.RequestLine = *rl
-	// 			read += n
-
-	// 			r.Status = ParserStatusDone
-	// 		case ParserStatusDone:
-	// 			return 0, ErrParserDoneStatus
-	// 			// break outer
-	// 		default:
-	// 			return 0, ErrUnknownState
-	// 		}
-	// 	}
 	return read, nil
 }
 
 func (r *Request) isDone() bool {
 	return r.Status == ParserStatusDone
-}
-
-func newRequest() *Request {
-	return &Request{
-		Status: ParserStatusInit,
-	}
 }
 
 func parseRequestLine(data []byte) (*RequestLine, int, error) {

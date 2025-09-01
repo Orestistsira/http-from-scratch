@@ -7,13 +7,44 @@ import (
 )
 
 var ErrMalformedHeaders = fmt.Errorf("malformed headers")
-var ErrMalformedFieldKey = fmt.Errorf("malformed field-key")
+var ErrMalformedFieldName = fmt.Errorf("malformed field-name")
 
 var separator = []byte("\r\n")
 
-type Headers map[string]string
+type Headers struct {
+	headers map[string]string
+}
 
-func (h Headers) Parse(data []byte) (n int, done bool, err error) {
+func NewHeaders() *Headers {
+	return &Headers{
+		headers: make(map[string]string),
+	}
+}
+
+func (h *Headers) Get(name string) string {
+	return h.headers[strings.ToLower(name)]
+}
+
+func (h *Headers) Set(name, value string) {
+	name = strings.ToLower(name)
+
+	existingValue, exists := h.headers[name]
+	if exists {
+		h.headers[name] = existingValue + ", " + value
+	} else {
+		h.headers[name] = value
+	}
+}
+
+func (h *Headers) IsEmpty() bool {
+	return len(h.headers) == 0
+}
+
+func (h *Headers) GetAll() map[string]string {
+	return h.headers
+}
+
+func (h *Headers) Parse(data []byte) (n int, done bool, err error) {
 	idx := bytes.Index(data, separator)
 	switch idx {
 	case -1:
@@ -29,19 +60,19 @@ func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 		return 0, false, ErrMalformedHeaders
 	}
 
-	// Get key
-	keyData := headerData[:colonIdx]
-	if keyData[len(keyData)-1] == ' ' {
-		return 0, false, ErrMalformedFieldKey
+	// Get name
+	nameData := headerData[:colonIdx]
+	if nameData[len(nameData)-1] == ' ' {
+		return 0, false, ErrMalformedFieldName
 	}
 
-	key := bytes.TrimSpace(keyData)
-	if len(key) == 0 {
-		return 0, false, ErrMalformedFieldKey
+	name := bytes.TrimSpace(nameData)
+	if len(name) == 0 {
+		return 0, false, ErrMalformedFieldName
 	}
 
-	// Validate key characters
-	for _, b := range key {
+	// Validate name characters
+	for _, b := range name {
 		switch {
 		case b >= 'A' && b <= 'Z':
 		case b >= 'a' && b <= 'z':
@@ -50,11 +81,11 @@ func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 			b == '\'' || b == '*' || b == '+' || b == '-' || b == '.' ||
 			b == '^' || b == '_' || b == '`' || b == '|' || b == '~':
 		default:
-			return 0, false, ErrMalformedFieldKey
+			return 0, false, ErrMalformedFieldName
 		}
 	}
 
-	fmt.Println(string(key))
+	fmt.Println(string(name))
 
 	// Get value
 	valueData := headerData[colonIdx+1:]
@@ -62,11 +93,7 @@ func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 
 	fmt.Println(string(value))
 
-	h[strings.ToLower(string(key))] = string(value)
+	h.Set(string(name), string(value))
 
 	return idx + len(separator), false, nil
-}
-
-func NewHeaders() Headers {
-	return Headers{}
 }
