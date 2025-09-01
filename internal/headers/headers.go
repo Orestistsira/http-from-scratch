@@ -40,8 +40,10 @@ func (h *Headers) IsEmpty() bool {
 	return len(h.headers) == 0
 }
 
-func (h *Headers) GetAll() map[string]string {
-	return h.headers
+func (h *Headers) ForEach(fn func(name, value string)) {
+	for name, value := range h.headers {
+		fn(name, value)
+	}
 }
 
 func (h *Headers) Parse(data []byte) (n int, done bool, err error) {

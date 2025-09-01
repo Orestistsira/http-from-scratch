@@ -42,9 +42,9 @@ func main() {
 		fmt.Printf("- Version: %s\n", r.RequestLine.HttpVersion)
 
 		fmt.Println("Headers:")
-		for key, value := range r.Headers.GetAll() {
-			fmt.Printf("- %s: %s\n", key, value)
-		}
+		r.Headers.ForEach(func(name, value string) {
+			fmt.Printf("- %s: %s\n", name, value)
+		})
 
 		fmt.Println("Connection closed")
 	}
