@@ -2,51 +2,10 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"net"
-	"strings"
+
+	"github.com/Orestistsira/http-from-scratch/internal/request"
 )
-
-func getLinesChannel(f io.ReadCloser) <-chan string {
-	out := make(chan string)
-
-	go func() {
-		defer f.Close()
-		defer close(out)
-
-		buffer := make([]byte, 8)
-		currentLine := ""
-
-		for {
-			n, err := f.Read(buffer)
-			if err != nil {
-				if err == io.EOF {
-					break
-				}
-				fmt.Println("Error reading file:", err)
-				return
-			}
-
-			parts := strings.Split(string(buffer[:n]), "\n")
-
-			// For all parts except the last, emit completed lines
-			for i := 0; i < len(parts)-1; i++ {
-				line := currentLine + parts[i]
-				out <- line
-				currentLine = ""
-			}
-
-			// Save the last part for the next iteration
-			currentLine += parts[len(parts)-1]
-		}
-
-		if currentLine != "" {
-			out <- currentLine
-		}
-	}()
-
-	return out
-}
 
 func main() {
 	// Listen on TCP port 42069 on all available unicast and
@@ -66,12 +25,21 @@ func main() {
 			fmt.Println("Error accepting connection:", err)
 			return
 		}
+		// defer conn.Close()
+
 		fmt.Println("A connection has been accepted")
 
-		lines := getLinesChannel(conn)
-		for line := range lines {
-			fmt.Println(line)
+		r, err := request.RequestFromReader(conn)
+
+		if err != nil {
+			fmt.Println("Error parsing request:", err)
+			continue
 		}
+
+		fmt.Println("Request line:")
+		fmt.Printf("- Method: %s\n", r.RequestLine.Method)
+		fmt.Printf("- Target: %s\n", r.RequestLine.RequestTarget)
+		fmt.Printf("- Version: %s\n", r.RequestLine.HttpVersion)
 
 		fmt.Println("Connection closed")
 	}

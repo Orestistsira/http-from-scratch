@@ -153,7 +153,7 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 		}
 		readIdx += n
 
-		fmt.Println(string(buffer[:readIdx]))
+		// fmt.Println(string(buffer[:readIdx]))
 
 		parsedIdx, err := request.parse(buffer[:readIdx])
 		if err != nil {
