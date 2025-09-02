@@ -74,8 +74,6 @@ func (s *Server) listen() {
 func (s *Server) handle(conn net.Conn) {
 	defer conn.Close()
 
-	fmt.Println("here")
-
 	r, err := request.RequestFromReader(conn)
 	if err != nil {
 		headers := response.GetDefaultHeaders(0)
@@ -83,8 +81,6 @@ func (s *Server) handle(conn net.Conn) {
 		response.WriteHeaders(conn, headers)
 		return
 	}
-
-	fmt.Println("here")
 
 	writer := bytes.NewBuffer([]byte{})
 

@@ -17,7 +17,7 @@ var ErrBodyLength = fmt.Errorf("content-length does not match body length")
 
 var separator = []byte("\r\n")
 
-const bufferSize = 8
+const bufferSize = 1024
 
 type ParserStatus string
 
@@ -66,64 +66,68 @@ func (r *Request) getBodyContentLength() int {
 func (r *Request) parse(data []byte) (int, error) {
 	read := 0
 
-	switch r.Status {
-	case ParserStatusInit:
-		rl, n, err := parseRequestLine(data)
-		if err != nil {
-			return 0, err
-		}
+outer:
+	for {
+		currentData := data[read:]
 
-		if n == 0 {
-			break
-		}
+		switch r.Status {
+		case ParserStatusInit:
+			rl, n, err := parseRequestLine(currentData)
+			if err != nil {
+				return 0, err
+			}
 
-		r.RequestLine = *rl
-		read += n
+			if n == 0 {
+				break outer
+			}
 
-		r.Status = ParserStatusHeaders
-	case ParserStatusHeaders:
-		n, done, err := r.Headers.Parse(data)
-		if err != nil {
-			return 0, err
-		}
+			r.RequestLine = *rl
+			read += n
 
-		if n == 0 {
-			break
-		}
+			r.Status = ParserStatusHeaders
+		case ParserStatusHeaders:
+			n, done, err := r.Headers.Parse(currentData)
+			if err != nil {
+				return 0, err
+			}
 
-		read += n
+			if n == 0 {
+				break outer
+			}
 
-		if done {
-			r.Status = ParserStatusBody
-		}
-	case ParserStatusBody:
-		contentLen := r.getBodyContentLength()
-		// No content-length in the headers -> No body
-		if contentLen == 0 {
-			r.Status = ParserStatusDone
-			break
-		}
+			read += n
 
-		if len(data) == 0 {
-			if len(r.Body) < contentLen {
+			if done {
+				r.Status = ParserStatusBody
+			}
+		case ParserStatusBody:
+			contentLen := r.getBodyContentLength()
+			// No content-length in the headers -> No body
+			if contentLen == 0 {
+				r.Status = ParserStatusDone
+				break
+			}
+
+			// Break to get more data
+			if len(currentData) == 0 {
+				break outer
+			}
+
+			r.Body = append(r.Body, currentData...)
+			read += len(currentData)
+
+			if len(r.Body) > contentLen {
 				return 0, ErrBodyLength
 			}
-		}
 
-		r.Body = append(r.Body, data...)
-		read += len(data)
-
-		if len(r.Body) > contentLen {
-			return 0, ErrBodyLength
+			if len(r.Body) == contentLen {
+				r.Status = ParserStatusDone
+			}
+		case ParserStatusDone:
+			break outer
+		default:
+			return 0, ErrUnknownState
 		}
-
-		if len(r.Body) == contentLen {
-			r.Status = ParserStatusDone
-		}
-	case ParserStatusDone:
-		break
-	default:
-		return 0, ErrUnknownState
 	}
 	return read, nil
 }
@@ -181,13 +185,7 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 
 		n, err := reader.Read(buffer[readIdx:])
 		if err != nil {
-			// NOTE: In real request we will have an error if we get an EOF. Now for testing when we get an EOF
-			// we go to the body - in order to end the parsing if body is empty or if we have read all the body
-			if err == io.EOF {
-				r.Status = ParserStatusBody
-			} else {
-				return nil, fmt.Errorf("error reading request: %w", err)
-			}
+			return nil, err
 		}
 		readIdx += n
 
