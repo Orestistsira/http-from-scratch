@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -12,6 +13,7 @@ import (
 
 var ErrMalformedRequestLine = fmt.Errorf("malformed request-line")
 var ErrUnknownState = fmt.Errorf("error unknown state")
+var ErrBodyLength = fmt.Errorf("content-length does not match body length")
 
 var separator = []byte("\r\n")
 
@@ -23,6 +25,7 @@ const (
 	ParserStatusInit    = "init"
 	ParserStatusDone    = "done"
 	ParserStatusHeaders = "headers"
+	ParserStatusBody    = "body"
 )
 
 type RequestLine struct {
@@ -34,6 +37,7 @@ type RequestLine struct {
 type Request struct {
 	RequestLine RequestLine
 	Headers     *headers.Headers
+	Body        []byte
 	Status      ParserStatus
 }
 
@@ -41,52 +45,85 @@ func newRequest() *Request {
 	return &Request{
 		Status:  ParserStatusInit,
 		Headers: headers.NewHeaders(),
+		Body:    []byte{},
 	}
+}
+
+func (r *Request) getBodyContentLength() int {
+	contentLenStr := r.Headers.Get("content-length")
+	// No content-length in the headers -> No body
+	if contentLenStr == "" {
+		return 0
+	}
+
+	contentLen, err := strconv.Atoi(contentLenStr)
+	if err != nil {
+		return 0
+	}
+	return contentLen
 }
 
 func (r *Request) parse(data []byte) (int, error) {
 	read := 0
 
-outer:
-	for {
-		currentData := data[read:]
-
-		switch r.Status {
-		case ParserStatusInit:
-			rl, n, err := parseRequestLine(currentData)
-			if err != nil {
-				return 0, err
-			}
-
-			if n == 0 {
-				break outer
-			}
-
-			r.RequestLine = *rl
-			read += n
-
-			r.Status = ParserStatusHeaders
-		case ParserStatusHeaders:
-			n, done, err := r.Headers.Parse(currentData)
-			if err != nil {
-				return 0, err
-			}
-
-			if n == 0 {
-				break outer
-			}
-
-			read += n
-
-			if done {
-				r.Status = ParserStatusDone
-			}
-
-		case ParserStatusDone:
-			break outer
-		default:
-			return 0, ErrUnknownState
+	switch r.Status {
+	case ParserStatusInit:
+		rl, n, err := parseRequestLine(data)
+		if err != nil {
+			return 0, err
 		}
+
+		if n == 0 {
+			break
+		}
+
+		r.RequestLine = *rl
+		read += n
+
+		r.Status = ParserStatusHeaders
+	case ParserStatusHeaders:
+		n, done, err := r.Headers.Parse(data)
+		if err != nil {
+			return 0, err
+		}
+
+		if n == 0 {
+			break
+		}
+
+		read += n
+
+		if done {
+			r.Status = ParserStatusBody
+		}
+	case ParserStatusBody:
+		contentLen := r.getBodyContentLength()
+		// No content-length in the headers -> No body
+		if contentLen == 0 {
+			r.Status = ParserStatusDone
+			break
+		}
+
+		if len(data) == 0 {
+			if len(r.Body) < contentLen {
+				return 0, ErrBodyLength
+			}
+		}
+
+		r.Body = append(r.Body, data...)
+		read += len(data)
+
+		if len(r.Body) > contentLen {
+			return 0, ErrBodyLength
+		}
+
+		if len(r.Body) == contentLen {
+			r.Status = ParserStatusDone
+		}
+	case ParserStatusDone:
+		break
+	default:
+		return 0, ErrUnknownState
 	}
 	return read, nil
 }
@@ -129,12 +166,12 @@ func parseRequestLine(data []byte) (*RequestLine, int, error) {
 }
 
 func RequestFromReader(reader io.Reader) (*Request, error) {
-	request := newRequest()
+	r := newRequest()
 
 	buffer := make([]byte, bufferSize)
 	readIdx := 0
 
-	for !request.isDone() {
+	for !r.isDone() {
 		// Grow buffer if full
 		if readIdx >= len(buffer) {
 			newBuf := make([]byte, len(buffer)*2)
@@ -144,17 +181,17 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 
 		n, err := reader.Read(buffer[readIdx:])
 		if err != nil {
+			// NOTE: In real request we will have an error if we get an EOF. Now for testing when we get an EOF
+			// we go to the body - in order to end the parsing if body is empty or if we have read all the body
 			if err == io.EOF {
-				request.Status = ParserStatusDone
-				break
+				r.Status = ParserStatusBody
+			} else {
+				return nil, fmt.Errorf("error reading request: %w", err)
 			}
-			return nil, fmt.Errorf("error reading request: %w", err)
 		}
 		readIdx += n
 
-		// fmt.Println(string(buffer[:readIdx]))
-
-		parsedIdx, err := request.parse(buffer[:readIdx])
+		parsedIdx, err := r.parse(buffer[:readIdx])
 		if err != nil {
 			return nil, fmt.Errorf("error parsing request: %w", err)
 		}
@@ -163,5 +200,5 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 		readIdx -= parsedIdx
 	}
 
-	return request, nil
+	return r, nil
 }

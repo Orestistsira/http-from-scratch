@@ -87,13 +87,9 @@ func (h *Headers) Parse(data []byte) (n int, done bool, err error) {
 		}
 	}
 
-	fmt.Println(string(name))
-
 	// Get value
 	valueData := headerData[colonIdx+1:]
 	value := bytes.TrimSpace(valueData)
-
-	fmt.Println(string(value))
 
 	h.Set(string(name), string(value))
 
