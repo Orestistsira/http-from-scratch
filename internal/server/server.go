@@ -16,6 +16,13 @@ type HandlerError struct {
 	Message    string
 }
 
+func (h *HandlerError) WriteError(w io.Writer) {
+	headers := response.GetDefaultHeaders(len(h.Message))
+	response.WriteStatusLine(w, h.StatusCode)
+	response.WriteHeaders(w, headers)
+	response.WriteBody(w, []byte(h.Message))
+}
+
 type Handler func(w io.Writer, req *request.Request) *HandlerError
 
 func WriteHandlerError(w io.Writer, handlerErr *HandlerError) error {
@@ -76,20 +83,19 @@ func (s *Server) handle(conn net.Conn) {
 
 	r, err := request.RequestFromReader(conn)
 	if err != nil {
-		headers := response.GetDefaultHeaders(0)
-		response.WriteStatusLine(conn, response.HTTP_400)
-		response.WriteHeaders(conn, headers)
+		hErr := &HandlerError{
+			StatusCode: response.HTTP_400,
+			Message:    err.Error(),
+		}
+		hErr.WriteError(conn)
 		return
 	}
 
 	writer := bytes.NewBuffer([]byte{})
 
-	errHandler := s.handler(writer, r)
-	if errHandler != nil {
-		headers := response.GetDefaultHeaders(len(errHandler.Message))
-		response.WriteStatusLine(conn, errHandler.StatusCode)
-		response.WriteHeaders(conn, headers)
-		response.WriteBody(conn, []byte(errHandler.Message))
+	hErr := s.handler(writer, r)
+	if hErr != nil {
+		hErr.WriteError(conn)
 		return
 	}
 
