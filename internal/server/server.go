@@ -1,19 +1,35 @@
 package server
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"net"
 	"sync/atomic"
 
+	"github.com/Orestistsira/http-from-scratch/internal/request"
 	"github.com/Orestistsira/http-from-scratch/internal/response"
 )
+
+type HandlerError struct {
+	StatusCode response.StatusCode
+	Message    string
+}
+
+type Handler func(w io.Writer, req *request.Request) *HandlerError
+
+func WriteHandlerError(w io.Writer, handlerErr *HandlerError) error {
+	_, err := fmt.Fprintf(w, "%d %s", handlerErr.StatusCode, handlerErr.Message)
+	return err
+}
 
 type Server struct {
 	running  atomic.Bool
 	listener net.Listener
+	handler  Handler
 }
 
-func Serve(port int) (*Server, error) {
+func Serve(port int, handler Handler) (*Server, error) {
 	// Create TCP listener
 	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
@@ -22,6 +38,7 @@ func Serve(port int) (*Server, error) {
 
 	s := &Server{
 		listener: ln,
+		handler:  handler,
 	}
 	s.running.Store(true)
 
@@ -57,15 +74,32 @@ func (s *Server) listen() {
 func (s *Server) handle(conn net.Conn) {
 	defer conn.Close()
 
-	headers := response.GetDefaultHeaders(0)
+	fmt.Println("here")
 
-	err := response.WriteStatusLine(conn, response.HTTP_200)
+	r, err := request.RequestFromReader(conn)
 	if err != nil {
+		headers := response.GetDefaultHeaders(0)
+		response.WriteStatusLine(conn, response.HTTP_400)
+		response.WriteHeaders(conn, headers)
 		return
 	}
 
-	err = response.WriteHeaders(conn, headers)
-	if err != nil {
+	fmt.Println("here")
+
+	writer := bytes.NewBuffer([]byte{})
+
+	errHandler := s.handler(writer, r)
+	if errHandler != nil {
+		headers := response.GetDefaultHeaders(len(errHandler.Message))
+		response.WriteStatusLine(conn, errHandler.StatusCode)
+		response.WriteHeaders(conn, headers)
+		response.WriteBody(conn, []byte(errHandler.Message))
 		return
 	}
+
+	body := writer.Bytes()
+	headers := response.GetDefaultHeaders(len(body))
+	response.WriteStatusLine(conn, response.HTTP_200)
+	response.WriteHeaders(conn, headers)
+	response.WriteBody(conn, body)
 }
