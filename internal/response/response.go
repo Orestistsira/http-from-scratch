@@ -9,6 +9,9 @@ import (
 
 var ErrStatusLine = fmt.Errorf("error writing status line")
 var ErrUnknownCode = fmt.Errorf("error unknown code")
+var ErrWriterStatusInit = fmt.Errorf("error cannot write status-line. Follow order: status-line -> headers -> body")
+var ErrWriterStatusHeaders = fmt.Errorf("error cannot write headers. Follow order: status-line -> headers -> body")
+var ErrWriterStatusBody = fmt.Errorf("error cannot write body. Follow order: status-line -> headers -> body")
 
 type StatusCode int
 
@@ -18,7 +21,47 @@ const (
 	HTTP_500 StatusCode = 500
 )
 
-func WriteStatusLine(w io.Writer, statusCode StatusCode) error {
+func GetDefaultHeaders(contentLen int) headers.Headers {
+	h := headers.NewHeaders()
+	h.Set("Content-Length", fmt.Sprintf("%d", contentLen))
+	h.Set("Connection", "close")
+	h.Set("Content-Type", "text/plain")
+	return *h
+}
+
+func GetHTMLHeaders(contentLen int) headers.Headers {
+	h := headers.NewHeaders()
+	h.Set("Content-Length", fmt.Sprintf("%d", contentLen))
+	h.Set("Connection", "close")
+	h.Set("Content-Type", "text/html")
+	return *h
+}
+
+type WriterStatus string
+
+const (
+	WriterStatusInit    WriterStatus = "init"
+	WriterStatusHeaders WriterStatus = "headers"
+	WriterStatusBody    WriterStatus = "body"
+)
+
+type Writer struct {
+	writer       io.Writer
+	writerStatus WriterStatus
+}
+
+func NewWriter(w io.Writer) *Writer {
+	return &Writer{
+		writer:       w,
+		writerStatus: WriterStatusInit,
+	}
+}
+
+func (w *Writer) WriteStatusLine(statusCode StatusCode) error {
+	if w.writerStatus != WriterStatusInit {
+		return ErrWriterStatusInit
+	}
+
 	var statusLine []byte
 
 	switch statusCode {
@@ -32,19 +75,18 @@ func WriteStatusLine(w io.Writer, statusCode StatusCode) error {
 		statusLine = []byte("HTTP/1.1 " + fmt.Sprintf("%d", statusCode) + "\r\n")
 	}
 
-	_, err := w.Write(statusLine)
+	_, err := w.writer.Write(statusLine)
+	if err == nil {
+		w.writerStatus = WriterStatusHeaders
+	}
 	return err
 }
 
-func GetDefaultHeaders(contentLen int) headers.Headers {
-	h := headers.NewHeaders()
-	h.Set("Content-Length", fmt.Sprintf("%d", contentLen))
-	h.Set("Connection", "close")
-	h.Set("Content-Type", "text/plain")
-	return *h
-}
+func (w *Writer) WriteHeaders(headers headers.Headers) error {
+	if w.writerStatus != WriterStatusHeaders {
+		return ErrWriterStatusHeaders
+	}
 
-func WriteHeaders(w io.Writer, headers headers.Headers) error {
 	b := []byte{}
 	headers.ForEach(func(name, value string) {
 		b = fmt.Appendf(b, "%s: %s\r\n", name, value)
@@ -53,11 +95,18 @@ func WriteHeaders(w io.Writer, headers headers.Headers) error {
 	// Write an extra CRLF to indicate end of headers
 	b = fmt.Appendf(b, "\r\n")
 
-	_, err := w.Write(b)
+	_, err := w.writer.Write(b)
+	if err == nil {
+		w.writerStatus = WriterStatusBody
+	}
 	return err
 }
 
-func WriteBody(w io.Writer, b []byte) error {
-	_, err := w.Write(b)
+func (w *Writer) WriteBody(b []byte) error {
+	if w.writerStatus != WriterStatusBody {
+		return ErrWriterStatusBody
+	}
+
+	_, err := w.writer.Write(b)
 	return err
 }
