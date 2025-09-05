@@ -37,6 +37,14 @@ func GetHTMLHeaders(contentLen int) headers.Headers {
 	return *h
 }
 
+func GetChunkedHeaders() headers.Headers {
+	h := headers.NewHeaders()
+	h.Set("Transfer-Encoding", "chunked")
+	h.Set("Connection", "close")
+	h.Set("Content-Type", "text/plain")
+	return *h
+}
+
 type WriterStatus string
 
 const (
@@ -109,4 +117,28 @@ func (w *Writer) WriteBody(b []byte) error {
 
 	_, err := w.writer.Write(b)
 	return err
+}
+
+func (w *Writer) WriteChunkedBody(p []byte) (int, error) {
+	if w.writerStatus != WriterStatusBody {
+		return 0, ErrWriterStatusBody
+	}
+
+	lenInHex := fmt.Sprintf("%x", len(p))
+
+	b := lenInHex + "\r\n" + string(p) + "\r\n"
+
+	n, err := w.writer.Write([]byte(b))
+	return n, err
+}
+
+func (w *Writer) WriteChunkedBodyDone() (int, error) {
+	if w.writerStatus != WriterStatusBody {
+		return 0, ErrWriterStatusBody
+	}
+
+	b := []byte("0\r\n\r\n")
+
+	n, err := w.writer.Write(b)
+	return n, err
 }

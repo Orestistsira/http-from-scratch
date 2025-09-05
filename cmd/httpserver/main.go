@@ -1,9 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/Orestistsira/http-from-scratch/internal/request"
@@ -12,6 +15,7 @@ import (
 )
 
 const port = 42069
+const bufferSize = 32
 
 // handler handles incoming HTTP requests
 func handler(w *response.Writer, req *request.Request) {
@@ -64,8 +68,43 @@ func handler(w *response.Writer, req *request.Request) {
 	}
 }
 
+func proxyHandler(w *response.Writer, req *request.Request) {
+	target := req.RequestLine.RequestTarget
+
+	if !strings.HasPrefix(target, "/httpbin") {
+		log.Println("Wrong prefix")
+		return
+	}
+
+	target = strings.TrimPrefix(target, "/httpbin")
+
+	res, err := http.Get("https://httpbin.org" + target)
+	if err != nil {
+		h := response.GetDefaultHeaders(0)
+		w.WriteStatusLine(response.HTTP_500)
+		w.WriteHeaders(h)
+		return
+	}
+
+	h := response.GetChunkedHeaders()
+	w.WriteStatusLine(response.HTTP_200)
+	w.WriteHeaders(h)
+
+	for {
+		buffer := make([]byte, bufferSize)
+
+		_, err := res.Body.Read(buffer)
+		if err != nil {
+			break
+		}
+		w.WriteChunkedBody(buffer)
+		fmt.Printf("%s", buffer)
+	}
+	w.WriteChunkedBodyDone()
+}
+
 func main() {
-	server, err := server.Serve(port, handler)
+	server, err := server.Serve(port, proxyHandler)
 	if err != nil {
 		log.Fatalf("Error starting server: %v", err)
 	}
