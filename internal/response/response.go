@@ -45,6 +45,16 @@ func GetChunkedHeaders() headers.Headers {
 	return *h
 }
 
+func GetChunkedWithTrailerHeaders() headers.Headers {
+	h := headers.NewHeaders()
+	h.Set("Transfer-Encoding", "chunked")
+	h.Set("Connection", "close")
+	h.Set("Content-Type", "text/plain")
+	h.Set("Trailer", "X-Content-SHA256")
+	h.Set("Trailer", "X-Content-Length")
+	return *h
+}
+
 type WriterStatus string
 
 const (
@@ -141,4 +151,20 @@ func (w *Writer) WriteChunkedBodyDone() (int, error) {
 
 	n, err := w.writer.Write(b)
 	return n, err
+}
+
+func (w *Writer) WriteTrailers(h headers.Headers) error {
+	if w.writerStatus != WriterStatusBody {
+		return ErrWriterStatusBody
+	}
+
+	b := []byte{}
+	b = fmt.Appendf(b, "0\r\n")
+	h.ForEach(func(name, value string) {
+		b = fmt.Appendf(b, "%s: %s\r\n", name, value)
+	})
+	b = fmt.Appendf(b, "\r\n")
+
+	_, err := w.writer.Write(b)
+	return err
 }

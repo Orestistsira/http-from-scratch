@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"log"
 	"net/http"
@@ -9,13 +10,22 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/Orestistsira/http-from-scratch/internal/headers"
 	"github.com/Orestistsira/http-from-scratch/internal/request"
 	"github.com/Orestistsira/http-from-scratch/internal/response"
 	"github.com/Orestistsira/http-from-scratch/internal/server"
 )
 
 const port = 42069
-const bufferSize = 32
+const bufferSize = 1024
+
+func hashToStr(b []byte) string {
+	out := ""
+	for _, b := range b {
+		out += fmt.Sprintf("%02x", b)
+	}
+	return out
+}
 
 // handler handles incoming HTTP requests
 func handler(w *response.Writer, req *request.Request) {
@@ -86,21 +96,34 @@ func proxyHandler(w *response.Writer, req *request.Request) {
 		return
 	}
 
-	h := response.GetChunkedHeaders()
+	h := response.GetChunkedWithTrailerHeaders()
 	w.WriteStatusLine(response.HTTP_200)
 	w.WriteHeaders(h)
 
-	for {
-		buffer := make([]byte, bufferSize)
+	buffer := make([]byte, bufferSize)
+	readIdx := 0
 
-		_, err := res.Body.Read(buffer)
+	for {
+		if readIdx >= len(buffer) {
+			newBuf := make([]byte, len(buffer)*2)
+			copy(newBuf, buffer)
+			buffer = newBuf
+		}
+
+		n, err := res.Body.Read(buffer[readIdx:])
 		if err != nil {
 			break
 		}
-		w.WriteChunkedBody(buffer)
+		w.WriteChunkedBody(buffer[readIdx : readIdx+n])
 		fmt.Printf("%s", buffer)
+
+		readIdx += n
 	}
-	w.WriteChunkedBodyDone()
+	trailers := headers.NewHeaders()
+	hash := sha256.Sum256(buffer[:readIdx])
+	trailers.Set("X-Content-SHA256", hashToStr(hash[:]))
+	trailers.Set("X-Content-Length", fmt.Sprintf("%d", len(buffer[:readIdx])))
+	w.WriteTrailers(*trailers)
 }
 
 func main() {
